@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sqlite3 ~/.codex/logs_1.sqlite .tables)",
+      "Bash(sqlite3 ~/.codex/logs_1.sqlite '.schema logs')",
+      "Bash(sqlite3 ~/.codex/logs_1.sqlite \"SELECT COUNT\\(*\\) as total_logs FROM logs;\")",
+      "Bash(sqlite3 ~/.codex/logs_1.sqlite \"SELECT sql FROM sqlite_master WHERE type=''table'' AND name=''logs'';\")",
+      "Bash(sqlite3 ~/.codex/state_5.sqlite \".tables\")",
+      "Bash(find ~ -maxdepth 3 -type f -name .openai-usage* -o -name *openai*usage*)"
+    ]
+  }
+}
