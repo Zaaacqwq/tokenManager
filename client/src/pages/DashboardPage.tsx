@@ -303,7 +303,7 @@ export default function DashboardPage({ username, onLogout }: Props) {
             {/* Charts */}
             <section>
               <h2 className="text-xs font-medium text-gray-400 mb-1.5">{t(locale, 'section.trend')}</h2>
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+              <div className="space-y-2">
                 <TokenChart data={chartData as Record<string, string | number>[]} xKey={timeRange === '24h' ? 'hour' : 'date'} title={t(locale, timeRange === '24h' ? 'chart.token.hourly' : 'chart.token')} locale={locale} />
                 <CostChart data={chartData as Record<string, string | number>[]} xKey={timeRange === '24h' ? 'hour' : 'date'} title={t(locale, timeRange === '24h' ? 'chart.cost.hourly' : 'chart.cost')} locale={locale} />
               </div>
@@ -311,20 +311,24 @@ export default function DashboardPage({ username, onLogout }: Props) {
 
             {/* Provider & Model Breakdown */}
             <section>
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
-                <ProviderBreakdown
-                  data={byProvider as Array<{ provider_id: number; provider_name: string; provider_type: string; requests: number; input_tokens: number; output_tokens: number; cost: number; }>}
-                  locale={locale}
-                  selectedId={highlightedProviderFromModel()}
-                  onSelect={handleProviderSelect}
-                />
+              <div className="grid grid-cols-1 lg:grid-cols-10 gap-2">
+                <div className="lg:col-span-3">
+                  <ProviderBreakdown
+                    data={byProvider as Array<{ provider_id: number; provider_name: string; provider_type: string; requests: number; input_tokens: number; output_tokens: number; cost: number; }>}
+                    locale={locale}
+                    selectedId={highlightedProviderFromModel()}
+                    onSelect={handleProviderSelect}
+                  />
+                </div>
 
-                <ModelBreakdown
-                  data={byModel as unknown as ModelStats[]}
-                  locale={locale}
-                  isHighlighted={isModelHighlighted}
-                  onToggle={handleModelToggle}
-                />
+                <div className="lg:col-span-7">
+                  <ModelBreakdown
+                    data={byModel as unknown as ModelStats[]}
+                    locale={locale}
+                    isHighlighted={isModelHighlighted}
+                    onToggle={handleModelToggle}
+                  />
+                </div>
               </div>
             </section>
           </>
