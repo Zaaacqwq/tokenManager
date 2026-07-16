@@ -32,7 +32,9 @@ function resolveHome(filepath: string): string {
  * `message.data` JSON column.
  *
  * OPENCODE_DB_PATH may point at a single .db file or a directory of them
- * (one snapshot per source machine on the VPS).
+ * (one snapshot per source machine on the VPS). Dedup is exact — message IDs
+ * are globally unique and enforced by a unique index — so no timestamp
+ * watermark is needed and multiple machines can backfill history safely.
  */
 export function syncOpenCode(): { synced: number; errors: number } {
   const dbPath = resolveHome(
@@ -49,46 +51,20 @@ export function syncOpenCode(): { synced: number; errors: number } {
         .map((name) => path.join(dbPath, name))
     : [dbPath];
 
-  const db = getDb();
-
-  const syncState = db.prepare(
-    'SELECT last_timestamp FROM sync_state WHERE source = ?'
-  ).get('opencode') as { last_timestamp: string } | undefined;
-
-  // Read the watermark once for all DBs: advancing it between files would
-  // skip a slower machine's rows older than a faster machine's newest.
-  const lastTimestamp = syncState?.last_timestamp || '1970-01-01T00:00:00.000Z';
-
   let synced = 0;
   let errors = 0;
-  let latestTs = lastTimestamp;
 
   for (const file of dbFiles) {
-    const result = syncOneDb(file, lastTimestamp);
+    const result = syncOneDb(file);
     synced += result.synced;
     errors += result.errors;
-    if (result.latestTs > latestTs) latestTs = result.latestTs;
-  }
-
-  if (latestTs > lastTimestamp) {
-    db.prepare(`
-      INSERT INTO sync_state (source, last_timestamp, updated_at)
-      VALUES ('opencode', ?, datetime('now'))
-      ON CONFLICT(source) DO UPDATE SET
-        last_timestamp = excluded.last_timestamp,
-        updated_at = datetime('now')
-    `).run(latestTs);
   }
 
   return { synced, errors };
 }
 
-function syncOneDb(
-  dbPath: string,
-  lastTimestamp: string
-): { synced: number; errors: number; latestTs: string } {
+function syncOneDb(dbPath: string): { synced: number; errors: number } {
   const db = getDb();
-  const lastMs = Date.parse(lastTimestamp);
 
   let provider = db.prepare(
     "SELECT id FROM providers WHERE type = 'opencode' LIMIT 1"
@@ -108,25 +84,24 @@ function syncOneDb(
     'INSERT INTO models (provider_id, name, input_price_per_m, output_price_per_m, cache_input_price_per_m, cache_output_price_per_m) VALUES (?, ?, ?, ?, ?, ?)'
   );
   const insertRecord = db.prepare(`
-    INSERT INTO usage_records (provider_id, model_id, source, session_id, input_tokens, output_tokens, cache_input_tokens, cache_output_tokens, cost_usd, recorded_at, raw_data)
-    VALUES (?, ?, 'opencode', ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR IGNORE INTO usage_records (provider_id, model_id, source, session_id, external_id, input_tokens, output_tokens, cache_input_tokens, cache_output_tokens, cost_usd, recorded_at, raw_data)
+    VALUES (?, ?, 'opencode', ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   let synced = 0;
   let errors = 0;
-  let latestTs = lastTimestamp;
 
   let source: Database.Database;
   try {
     source = new Database(dbPath, { readonly: true, fileMustExist: true });
   } catch {
-    return { synced: 0, errors: 1, latestTs: lastTimestamp };
+    return { synced: 0, errors: 1 };
   }
 
   try {
     const rows = source.prepare(
-      'SELECT session_id, data, time_created FROM message WHERE time_created > ? ORDER BY time_created'
-    ).all(lastMs) as Array<{ session_id: string; data: string; time_created: number }>;
+      'SELECT id, session_id, data, time_created FROM message ORDER BY time_created'
+    ).all() as Array<{ id: string; session_id: string; data: string; time_created: number }>;
 
     db.transaction(() => {
       for (const row of rows) {
@@ -160,10 +135,11 @@ function syncOneDb(
             ? data.cost
             : calculateCost(modelName, inputTokens, outputTokens, cacheRead, cacheWrite);
 
-          insertRecord.run(
+          const result = insertRecord.run(
             provider!.id,
             model.id,
             row.session_id,
+            row.id,
             inputTokens,
             outputTokens,
             cacheRead,
@@ -172,9 +148,7 @@ function syncOneDb(
             ts,
             row.data
           );
-          synced++;
-
-          if (ts > latestTs) latestTs = ts;
+          synced += result.changes;
         } catch {
           errors++;
         }
@@ -186,5 +160,5 @@ function syncOneDb(
     source.close();
   }
 
-  return { synced, errors, latestTs };
+  return { synced, errors };
 }

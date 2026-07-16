@@ -137,12 +137,6 @@ export function syncAntigravity(): { synced: number; errors: number } {
 
   const db = getDb();
 
-  const syncState = db.prepare(
-    'SELECT last_timestamp FROM sync_state WHERE source = ?'
-  ).get('antigravity') as { last_timestamp: string } | undefined;
-
-  const lastTimestamp = syncState?.last_timestamp || '1970-01-01T00:00:00.000Z';
-
   let provider = db.prepare(
     "SELECT id FROM providers WHERE type = 'antigravity' LIMIT 1"
   ).get() as { id: number } | undefined;
@@ -160,9 +154,12 @@ export function syncAntigravity(): { synced: number; errors: number } {
   const insertModel = db.prepare(
     'INSERT INTO models (provider_id, name, input_price_per_m, output_price_per_m, cache_input_price_per_m, cache_output_price_per_m) VALUES (?, ?, ?, ?, ?, ?)'
   );
+  // Dedup is exact via external_id (responseId, or sessionId:idx when the
+  // blob lacks one) — no timestamp watermark, so multiple machines can
+  // backfill history safely and re-scans are idempotent.
   const insertRecord = db.prepare(`
-    INSERT INTO usage_records (provider_id, model_id, source, session_id, input_tokens, output_tokens, cache_input_tokens, cache_output_tokens, cost_usd, recorded_at, raw_data)
-    VALUES (?, ?, 'antigravity', ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR IGNORE INTO usage_records (provider_id, model_id, source, session_id, external_id, input_tokens, output_tokens, cache_input_tokens, cache_output_tokens, cost_usd, recorded_at, raw_data)
+    VALUES (?, ?, 'antigravity', ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const dbFiles = fs.readdirSync(conversationsDir)
@@ -171,7 +168,6 @@ export function syncAntigravity(): { synced: number; errors: number } {
 
   let synced = 0;
   let errors = 0;
-  let latestTs = lastTimestamp;
 
   db.transaction(() => {
     for (const file of dbFiles) {
@@ -201,10 +197,8 @@ export function syncAntigravity(): { synced: number; errors: number } {
           sessionCreatedMs = fs.statSync(file).mtimeMs;
         }
 
-        const rows = source.prepare('SELECT data FROM gen_metadata ORDER BY idx')
-          .all() as Array<{ data: Buffer }>;
-
-        const seenResponseIds = new Set<string>();
+        const rows = source.prepare('SELECT idx, data FROM gen_metadata ORDER BY idx')
+          .all() as Array<{ idx: number; data: Buffer }>;
 
         for (const row of rows) {
           try {
@@ -218,16 +212,12 @@ export function syncAntigravity(): { synced: number; errors: number } {
             const outputTokens = varintField(usage, 9) + varintField(usage, 10);
             if (!inputTokens && !cacheRead && !outputTokens) continue;
 
-            const responseId = stringField(usage, 11);
-            if (responseId) {
-              if (seenResponseIds.has(responseId)) continue;
-              seenResponseIds.add(responseId);
-            }
+            const responseId = stringField(usage, 11)?.trim();
+            const externalId = responseId || `${sessionId}:${row.idx}`;
 
             const gen = messageField(chatModel, 9);
             const genMs = gen ? protoTimestampMs(messageField(gen, 4)) : 0;
             const ts = new Date(genMs > 0 ? genMs : sessionCreatedMs).toISOString();
-            if (ts <= lastTimestamp) continue;
 
             const modelName = stringField(chatModel, 19)?.trim() || 'unknown';
 
@@ -244,10 +234,11 @@ export function syncAntigravity(): { synced: number; errors: number } {
 
             const cost = calculateCost(modelName, inputTokens, outputTokens, cacheRead, 0);
 
-            insertRecord.run(
+            const result = insertRecord.run(
               provider!.id,
               model.id,
               sessionId,
+              externalId,
               inputTokens,
               outputTokens,
               cacheRead,
@@ -256,9 +247,7 @@ export function syncAntigravity(): { synced: number; errors: number } {
               ts,
               null
             );
-            synced++;
-
-            if (ts > latestTs) latestTs = ts;
+            synced += result.changes;
           } catch {
             errors++;
           }
@@ -268,16 +257,6 @@ export function syncAntigravity(): { synced: number; errors: number } {
       } finally {
         source.close();
       }
-    }
-
-    if (latestTs > lastTimestamp) {
-      db.prepare(`
-        INSERT INTO sync_state (source, last_timestamp, updated_at)
-        VALUES ('antigravity', ?, datetime('now'))
-        ON CONFLICT(source) DO UPDATE SET
-          last_timestamp = excluded.last_timestamp,
-          updated_at = datetime('now')
-      `).run(latestTs);
     }
   })();
 

@@ -78,6 +78,17 @@ function initSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_usage_source ON usage_records(source);
     CREATE INDEX IF NOT EXISTS idx_usage_model ON usage_records(model_id);
   `);
+
+  // Migration: exact-dedup key for collectors that have stable per-record IDs
+  // (multi-machine sources can't rely on a shared timestamp watermark).
+  const cols = db.prepare('PRAGMA table_info(usage_records)').all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === 'external_id')) {
+    db.exec('ALTER TABLE usage_records ADD COLUMN external_id TEXT');
+  }
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_external
+      ON usage_records(source, external_id) WHERE external_id IS NOT NULL
+  `);
 }
 
 export function closeDb(): void {
