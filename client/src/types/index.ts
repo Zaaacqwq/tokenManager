@@ -65,6 +65,9 @@ export interface SyncResult {
   claude: { synced: number; errors: number };
   codex: { synced: number; errors: number };
   openai: { synced: number; errors: number };
+  openclaw: { synced: number; errors: number };
+  opencode: { synced: number; errors: number };
+  antigravity: { synced: number; errors: number };
 }
 
 export type TimeRange = '24h' | '7d' | '30d' | '180d' | '365d' | 'custom';

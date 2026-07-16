@@ -33,6 +33,8 @@ const FALLBACK_PRICES: Record<string, { input: number; output: number; cacheRead
   'gpt-5.3-codex': { input: 1.75, output: 14, cacheRead: 0.175, cacheWrite: 0 },
   'gpt-5.5': { input: 1.75, output: 14, cacheRead: 0.175, cacheWrite: 0 },
   'gpt-5.6': { input: 1.75, output: 14, cacheRead: 0.175, cacheWrite: 0 },
+  'gemini': { input: 0.5, output: 3, cacheRead: 0.125, cacheWrite: 0 },
+  'glm': { input: 0.6, output: 2.2, cacheRead: 0.11, cacheWrite: 0 },
 };
 
 function loadDiskCache(): PricingCache | null {
