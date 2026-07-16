@@ -30,6 +30,9 @@ function resolveHome(filepath: string): string {
  * Sync from OpenCode's SQLite database (~/.local/share/opencode/opencode.db).
  * Assistant messages store tokens, model, and OpenCode's own cost in the
  * `message.data` JSON column.
+ *
+ * OPENCODE_DB_PATH may point at a single .db file or a directory of them
+ * (one snapshot per source machine on the VPS).
  */
 export function syncOpenCode(): { synced: number; errors: number } {
   const dbPath = resolveHome(
@@ -40,13 +43,51 @@ export function syncOpenCode(): { synced: number; errors: number } {
     return { synced: 0, errors: 0 };
   }
 
+  const dbFiles = fs.statSync(dbPath).isDirectory()
+    ? fs.readdirSync(dbPath)
+        .filter((name) => name.endsWith('.db'))
+        .map((name) => path.join(dbPath, name))
+    : [dbPath];
+
   const db = getDb();
 
   const syncState = db.prepare(
     'SELECT last_timestamp FROM sync_state WHERE source = ?'
   ).get('opencode') as { last_timestamp: string } | undefined;
 
+  // Read the watermark once for all DBs: advancing it between files would
+  // skip a slower machine's rows older than a faster machine's newest.
   const lastTimestamp = syncState?.last_timestamp || '1970-01-01T00:00:00.000Z';
+
+  let synced = 0;
+  let errors = 0;
+  let latestTs = lastTimestamp;
+
+  for (const file of dbFiles) {
+    const result = syncOneDb(file, lastTimestamp);
+    synced += result.synced;
+    errors += result.errors;
+    if (result.latestTs > latestTs) latestTs = result.latestTs;
+  }
+
+  if (latestTs > lastTimestamp) {
+    db.prepare(`
+      INSERT INTO sync_state (source, last_timestamp, updated_at)
+      VALUES ('opencode', ?, datetime('now'))
+      ON CONFLICT(source) DO UPDATE SET
+        last_timestamp = excluded.last_timestamp,
+        updated_at = datetime('now')
+    `).run(latestTs);
+  }
+
+  return { synced, errors };
+}
+
+function syncOneDb(
+  dbPath: string,
+  lastTimestamp: string
+): { synced: number; errors: number; latestTs: string } {
+  const db = getDb();
   const lastMs = Date.parse(lastTimestamp);
 
   let provider = db.prepare(
@@ -79,7 +120,7 @@ export function syncOpenCode(): { synced: number; errors: number } {
   try {
     source = new Database(dbPath, { readonly: true, fileMustExist: true });
   } catch {
-    return { synced: 0, errors: 1 };
+    return { synced: 0, errors: 1, latestTs: lastTimestamp };
   }
 
   try {
@@ -138,16 +179,6 @@ export function syncOpenCode(): { synced: number; errors: number } {
           errors++;
         }
       }
-
-      if (latestTs > lastTimestamp) {
-        db.prepare(`
-          INSERT INTO sync_state (source, last_timestamp, updated_at)
-          VALUES ('opencode', ?, datetime('now'))
-          ON CONFLICT(source) DO UPDATE SET
-            last_timestamp = excluded.last_timestamp,
-            updated_at = datetime('now')
-        `).run(latestTs);
-      }
     })();
   } catch {
     errors++;
@@ -155,5 +186,5 @@ export function syncOpenCode(): { synced: number; errors: number } {
     source.close();
   }
 
-  return { synced, errors };
+  return { synced, errors, latestTs };
 }
