@@ -101,6 +101,7 @@ export function syncCodex(): { synced: number; errors: number } {
     for (const file of jsonlFiles) {
       try {
         let sessionId = '';
+        let currentModel = 'codex-mini';
 
         for (const line of readJsonlLines(file)) {
           try {
@@ -110,6 +111,13 @@ export function syncCodex(): { synced: number; errors: number } {
             if (event.type === 'session_meta') {
               const meta = event.payload as SessionMeta['payload'];
               sessionId = meta.id || '';
+              continue;
+            }
+
+            // Each turn_context announces the model used by following token_count events
+            if (event.type === 'turn_context') {
+              const ctx = event.payload as { model?: string };
+              if (ctx?.model) currentModel = ctx.model;
               continue;
             }
 
@@ -127,11 +135,11 @@ export function syncCodex(): { synced: number; errors: number } {
             const cachedInput = usage.cached_input_tokens || 0;
             const reasoningOutput = usage.reasoning_output_tokens || 0;
 
-            const modelName = 'codex-mini';
-            const prices = getModelPrices(modelName);
+            const modelName = currentModel;
 
             let model = findModel.get(provider!.id, modelName) as { id: number } | undefined;
             if (!model) {
+              const prices = getModelPrices(modelName);
               const result = insertModel.run(
                 provider!.id, modelName,
                 prices.input, prices.output,
