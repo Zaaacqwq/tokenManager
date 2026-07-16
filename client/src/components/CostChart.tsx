@@ -38,10 +38,10 @@ export default function CostChart({ data, xKey, title, locale }: Props) {
     <div className="bg-white rounded-lg border border-gray-200 p-4">
       <h3 className="text-xs font-medium text-gray-500 mb-1">{title}</h3>
       <ResponsiveContainer width="100%" height={260}>
-        <AreaChart data={data} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+        <AreaChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
           <XAxis dataKey={xKey} tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} tickFormatter={(v: string) => v.replace(/^\d{4}-/, '')} />
-          <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} tickFormatter={(v: number) => formatCost(v)} width={50} />
+          <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} tickLine={false} axisLine={false} tickFormatter={(v: number) => formatCost(v)} width={60} />
           <Tooltip
             contentStyle={{ borderRadius: '6px', border: '1px solid #e5e7eb', boxShadow: '0 2px 4px rgba(0,0,0,0.08)', fontSize: '12px', padding: '6px 10px' }}
             formatter={(value: number) => [formatCost(value), t(locale, 'legend.cost')]}

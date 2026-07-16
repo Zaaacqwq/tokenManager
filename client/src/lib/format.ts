@@ -41,6 +41,12 @@ export function getDateRange(range: string): { start: string; end: string } {
     case '30d':
       start.setDate(start.getDate() - 30);
       break;
+    case '180d':
+      start.setDate(start.getDate() - 180);
+      break;
+    case '365d':
+      start.setDate(start.getDate() - 365);
+      break;
     default:
       start.setDate(start.getDate() - 7);
   }

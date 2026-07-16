@@ -9,8 +9,9 @@ import StatsCard from '@/components/StatsCard';
 import TokenChart from '@/components/TokenChart';
 import CostChart from '@/components/CostChart';
 import ProviderBreakdown from '@/components/ProviderBreakdown';
+import ModelBreakdown from '@/components/ModelBreakdown';
 import TimeRangeSelector from '@/components/TimeRangeSelector';
-import type { TimeRange } from '@/types';
+import type { ModelStats, TimeRange } from '@/types';
 
 interface Props {
   username: string | null;
@@ -318,51 +319,12 @@ export default function DashboardPage({ username, onLogout }: Props) {
                   onSelect={handleProviderSelect}
                 />
 
-                <div className="bg-white rounded-lg border border-gray-200 p-4">
-                  <h3 className="text-xs font-medium text-gray-500 mb-2">{t(locale, 'section.model')}</h3>
-                  {byModel.length === 0 ? (
-                    <p className="text-gray-400 text-xs">{t(locale, 'chart.noData')}</p>
-                  ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-xs">
-                        <thead>
-                          <tr className="text-left text-gray-400 border-b border-gray-100">
-                            <th className="pb-1.5 font-medium">{t(locale, 'table.model')}</th>
-                            <th className="pb-1.5 font-medium text-right">{t(locale, 'table.requests')}</th>
-                            <th className="pb-1.5 font-medium text-right">{t(locale, 'table.input')}</th>
-                            <th className="pb-1.5 font-medium text-right">{t(locale, 'table.output')}</th>
-                            <th className="pb-1.5 font-medium text-right">{t(locale, 'table.cost')}</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {byModel.map((m) => {
-                            const id = String(m.model_id);
-                            const highlighted = isModelHighlighted(id);
-
-                            return (
-                              <tr
-                                key={id}
-                                onClick={() => handleModelToggle(id)}
-                                className={`border-b border-gray-50 cursor-pointer transition-colors ${highlighted ? 'bg-orange-50' : 'hover:bg-gray-50/50'}`}
-                              >
-                                <td className="py-2">
-                                  <div className={`font-medium ${highlighted ? 'text-orange-700' : 'text-gray-800'}`}>
-                                    {String(m.model_name)}
-                                  </div>
-                                  <div className="text-[11px] text-gray-400">{String(m.provider_name)}</div>
-                                </td>
-                                <td className="py-2 text-right text-gray-600">{formatNumber(m.requests as number)}</td>
-                                <td className="py-2 text-right text-gray-600">{formatTokens(m.input_tokens as number)}</td>
-                                <td className="py-2 text-right text-gray-600">{formatTokens(m.output_tokens as number)}</td>
-                                <td className="py-2 text-right font-medium text-orange-600">{formatCost(m.cost as number)}</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
+                <ModelBreakdown
+                  data={byModel as unknown as ModelStats[]}
+                  locale={locale}
+                  isHighlighted={isModelHighlighted}
+                  onToggle={handleModelToggle}
+                />
               </div>
             </section>
           </>

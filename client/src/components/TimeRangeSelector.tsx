@@ -14,6 +14,8 @@ export default function TimeRangeSelector({ value, onChange, locale }: Props) {
     { label: t(locale, 'time.24h'), value: '24h' },
     { label: t(locale, 'time.7d'), value: '7d' },
     { label: t(locale, 'time.30d'), value: '30d' },
+    { label: t(locale, 'time.180d'), value: '180d' },
+    { label: t(locale, 'time.365d'), value: '365d' },
   ];
 
   return (

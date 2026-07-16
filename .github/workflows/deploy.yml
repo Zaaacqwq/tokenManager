@@ -1,0 +1,62 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            client/package-lock.json
+            server/package-lock.json
+
+      - name: Build client
+        working-directory: client
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build server
+        working-directory: server
+        run: |
+          npm ci
+          npm run build
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
+
+      # Only built artifacts are synced; server/data (SQLite DB) and .env
+      # on the VPS are never touched.
+      - name: Sync artifacts to VPS
+        run: |
+          rsync -az --delete client/dist/ "root@${{ secrets.VPS_HOST }}:/opt/token-manager/client/dist/"
+          rsync -az --delete server/dist/ "root@${{ secrets.VPS_HOST }}:/opt/token-manager/server/dist/"
+          rsync -az server/package.json server/package-lock.json "root@${{ secrets.VPS_HOST }}:/opt/token-manager/server/"
+          rsync -az ecosystem.config.cjs "root@${{ secrets.VPS_HOST }}:/opt/token-manager/"
+
+      - name: Install production deps and restart
+        run: |
+          ssh "root@${{ secrets.VPS_HOST }}" '
+            set -e
+            cd /opt/token-manager/server
+            npm ci --omit=dev
+            pm2 startOrReload /opt/token-manager/ecosystem.config.cjs --only token-manager
+            pm2 save
+          '

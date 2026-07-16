@@ -18,6 +18,8 @@ const translations = {
     'time.24h': '24h',
     'time.7d': '7 Days',
     'time.30d': '30 Days',
+    'time.180d': '6 Months',
+    'time.365d': '1 Year',
 
     // Request stats
     'section.requests': 'Request Stats',
@@ -57,6 +59,8 @@ const translations = {
     'table.requests': 'Requests',
     'table.input': 'Input',
     'table.output': 'Output',
+    'table.cacheRead': 'CacheR',
+    'table.cacheWrite': 'CacheW',
     'table.cost': 'Cost',
     'provider.requests': 'requests',
     'provider.in': 'In',
@@ -76,6 +80,8 @@ const translations = {
     'time.24h': '24 小时',
     'time.7d': '7 天',
     'time.30d': '30 天',
+    'time.180d': '半年',
+    'time.365d': '一年',
 
     'section.requests': '请求数据',
     'stat.totalRequests': '请求总数',
@@ -110,6 +116,8 @@ const translations = {
     'table.requests': '请求',
     'table.input': '输入',
     'table.output': '输出',
+    'table.cacheRead': '缓存读',
+    'table.cacheWrite': '缓存写',
     'table.cost': '费用',
     'provider.requests': '请求',
     'provider.in': '入',

@@ -210,6 +210,8 @@ router.get('/by-model', (req: Request, res: Response): void => {
       COUNT(*) as requests,
       SUM(u.input_tokens) as input_tokens,
       SUM(u.output_tokens) as output_tokens,
+      SUM(u.cache_input_tokens) as cache_input_tokens,
+      SUM(u.cache_output_tokens) as cache_output_tokens,
       SUM(u.cost_usd) as cost
     FROM usage_records u
     JOIN models m ON u.model_id = m.id

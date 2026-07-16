@@ -46,6 +46,8 @@ export interface ModelStats {
   requests: number;
   input_tokens: number;
   output_tokens: number;
+  cache_input_tokens: number;
+  cache_output_tokens: number;
   cost: number;
 }
 
@@ -65,4 +67,4 @@ export interface SyncResult {
   openai: { synced: number; errors: number };
 }
 
-export type TimeRange = '24h' | '7d' | '30d' | 'custom';
+export type TimeRange = '24h' | '7d' | '30d' | '180d' | '365d' | 'custom';
