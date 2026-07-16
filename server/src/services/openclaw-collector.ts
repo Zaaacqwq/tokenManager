@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { getDb } from '../db/schema.js';
 import { getModelPrices, calculateCost } from './pricing.js';
+import { readJsonlLines } from './read-jsonl.js';
 
 interface OpenClawUsage {
   input: number;
@@ -95,13 +96,10 @@ export function syncOpenClaw(): { synced: number; errors: number } {
   db.transaction(() => {
     for (const file of jsonlFiles) {
       try {
-        const content = fs.readFileSync(file, 'utf-8');
-        const lines = content.split('\n').filter(Boolean);
-
         // Extract session ID from directory name or session entry
         let sessionId = path.basename(path.dirname(file));
 
-        for (const line of lines) {
+        for (const line of readJsonlLines(file)) {
           try {
             const entry: OpenClawEntry = JSON.parse(line);
 

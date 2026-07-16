@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { getDb } from '../db/schema.js';
 import { getModelPrices, calculateCost } from './pricing.js';
+import { readJsonlLines } from './read-jsonl.js';
 
 interface ClaudeUsage {
   input_tokens?: number;
@@ -53,13 +54,10 @@ function parseDedupedRecords(
   file: string,
   lastTimestamp: string
 ): DedupedRecord[] {
-  const content = fs.readFileSync(file, 'utf-8');
-  const lines = content.split('\n').filter(Boolean);
-
   // Group by composite key: messageId:requestId
   const groups = new Map<string, DedupedRecord>();
 
-  for (const line of lines) {
+  for (const line of readJsonlLines(file)) {
     try {
       const entry: SessionMessage = JSON.parse(line);
 

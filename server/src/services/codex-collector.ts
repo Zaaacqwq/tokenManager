@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { getDb } from '../db/schema.js';
 import { getModelPrices, calculateCost } from './pricing.js';
+import { readJsonlLines } from './read-jsonl.js';
 
 interface TokenCountPayload {
   type: 'token_count';
@@ -99,12 +100,9 @@ export function syncCodex(): { synced: number; errors: number } {
   db.transaction(() => {
     for (const file of jsonlFiles) {
       try {
-        const content = fs.readFileSync(file, 'utf-8');
-        const lines = content.split('\n').filter(Boolean);
-
         let sessionId = '';
 
-        for (const line of lines) {
+        for (const line of readJsonlLines(file)) {
           try {
             const event: CodexEvent = JSON.parse(line);
 
