@@ -45,15 +45,19 @@ function resolveHome(filepath: string): string {
     : filepath;
 }
 
+/** Exact-dedup key; null when the entry carries no usable id. */
+function externalIdOf(record: DedupedRecord): string | null {
+  return record.messageId || record.requestId
+    ? `${record.messageId}:${record.requestId}`
+    : null;
+}
+
 /**
  * Parse a JSONL file and return deduplicated usage records.
  * Claude Code streaming creates multiple entries with the same message.id + requestId.
  * We keep only the entry with the highest output_tokens per group (the final count).
  */
-function parseDedupedRecords(
-  file: string,
-  lastTimestamp: string
-): DedupedRecord[] {
+function parseDedupedRecords(file: string): DedupedRecord[] {
   // Group by composite key: messageId:requestId
   const groups = new Map<string, DedupedRecord>();
 
@@ -71,7 +75,6 @@ function parseDedupedRecords(
       ) continue;
 
       const ts = entry.timestamp || '';
-      if (ts <= lastTimestamp) continue;
 
       const messageId = entry.message?.id || entry.uuid || '';
       const requestId = entry.requestId || '';
@@ -117,7 +120,11 @@ function parseDedupedRecords(
 
 /**
  * Sync from Claude Code session JSONL files in ~/.claude/projects/
- * Deduplicates streaming responses using message.id + requestId composite key.
+ * Deduplicates streaming responses using message.id + requestId composite key,
+ * which is also the external_id stored in the DB — dedup is exact, so every
+ * file is re-scanned each run and machines can backfill history at any time
+ * (a shared timestamp watermark would have dropped anything older than what
+ * the other machines had already reported).
  */
 export function syncClaudeCode(): { synced: number; errors: number } {
   const projectsDir = resolveHome(
@@ -142,18 +149,11 @@ export function syncClaudeCode(): { synced: number; errors: number } {
     provider = { id: result.lastInsertRowid as number };
   }
 
-  // Get sync state
-  const syncState = db.prepare(
-    'SELECT last_timestamp FROM sync_state WHERE source = ?'
-  ).get('claude_code') as { last_timestamp: string } | undefined;
-
-  const lastTimestamp = syncState?.last_timestamp || '1970-01-01T00:00:00.000Z';
-
   const jsonlFiles = findJsonlFiles(projectsDir);
 
   const insertRecord = db.prepare(`
-    INSERT INTO usage_records (provider_id, model_id, source, session_id, input_tokens, output_tokens, cache_input_tokens, cache_output_tokens, cost_usd, recorded_at, raw_data)
-    VALUES (?, ?, 'claude_code', ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR IGNORE INTO usage_records (provider_id, model_id, source, session_id, external_id, input_tokens, output_tokens, cache_input_tokens, cache_output_tokens, cost_usd, recorded_at, raw_data)
+    VALUES (?, ?, 'claude_code', ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const findModel = db.prepare(
@@ -166,15 +166,18 @@ export function syncClaudeCode(): { synced: number; errors: number } {
 
   let synced = 0;
   let errors = 0;
-  let latestTs = lastTimestamp;
 
   db.transaction(() => {
     for (const file of jsonlFiles) {
       try {
-        const records = parseDedupedRecords(file, lastTimestamp);
+        const records = parseDedupedRecords(file);
 
         for (const record of records) {
           try {
+            const externalId = externalIdOf(record);
+            // Without a key the row would re-insert on every run
+            if (!externalId) continue;
+
             // Resolve model
             let model = findModel.get(provider!.id, record.model) as { id: number } | undefined;
             if (!model) {
@@ -192,10 +195,11 @@ export function syncClaudeCode(): { synced: number; errors: number } {
               record.cacheRead, record.cacheCreate
             );
 
-            insertRecord.run(
+            const result = insertRecord.run(
               provider!.id,
               model.id,
               record.sessionId || null,
+              externalId,
               record.inputTokens,
               record.outputTokens,
               record.cacheRead,
@@ -204,9 +208,7 @@ export function syncClaudeCode(): { synced: number; errors: number } {
               record.timestamp,
               record.rawLine
             );
-            synced++;
-
-            if (record.timestamp > latestTs) latestTs = record.timestamp;
+            synced += result.changes;
           } catch {
             errors++;
           }
@@ -214,17 +216,6 @@ export function syncClaudeCode(): { synced: number; errors: number } {
       } catch {
         errors++;
       }
-    }
-
-    // Update sync state
-    if (latestTs > lastTimestamp) {
-      db.prepare(`
-        INSERT INTO sync_state (source, last_timestamp, updated_at)
-        VALUES ('claude_code', ?, datetime('now'))
-        ON CONFLICT(source) DO UPDATE SET
-          last_timestamp = excluded.last_timestamp,
-          updated_at = datetime('now')
-      `).run(latestTs);
     }
   })();
 
@@ -302,13 +293,11 @@ export function syncClaudeFromUpload(lines: string[]): { synced: number; errors:
     }
   }
 
-  const checkExisting = db.prepare(
-    "SELECT id FROM usage_records WHERE source = 'claude_code_remote' AND recorded_at = ? AND session_id = ? AND input_tokens = ? AND output_tokens = ? LIMIT 1"
-  );
-
+  // Same source and key as the file scan: a message that arrives both ways
+  // (uploaded here and rsynced to the VPS) is stored once.
   const insertRecord = db.prepare(`
-    INSERT INTO usage_records (provider_id, model_id, source, session_id, input_tokens, output_tokens, cache_input_tokens, cache_output_tokens, cost_usd, recorded_at, raw_data)
-    VALUES (?, ?, 'claude_code_remote', ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR IGNORE INTO usage_records (provider_id, model_id, source, session_id, external_id, input_tokens, output_tokens, cache_input_tokens, cache_output_tokens, cost_usd, recorded_at, raw_data)
+    VALUES (?, ?, 'claude_code', ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const findModel = db.prepare(
@@ -325,11 +314,8 @@ export function syncClaudeFromUpload(lines: string[]): { synced: number; errors:
   db.transaction(() => {
     for (const record of groups.values()) {
       try {
-        // DB-level dedup check
-        const existing = checkExisting.get(
-          record.timestamp, record.sessionId, record.inputTokens, record.outputTokens
-        );
-        if (existing) continue;
+        const externalId = externalIdOf(record);
+        if (!externalId) continue;
 
         let model = findModel.get(provider!.id, record.model) as { id: number } | undefined;
         if (!model) {
@@ -347,10 +333,11 @@ export function syncClaudeFromUpload(lines: string[]): { synced: number; errors:
           record.cacheRead, record.cacheCreate
         );
 
-        insertRecord.run(
+        const result = insertRecord.run(
           provider!.id,
           model.id,
           record.sessionId || null,
+          externalId,
           record.inputTokens,
           record.outputTokens,
           record.cacheRead,
@@ -359,7 +346,7 @@ export function syncClaudeFromUpload(lines: string[]): { synced: number; errors:
           record.timestamp,
           record.rawLine
         );
-        synced++;
+        synced += result.changes;
       } catch {
         errors++;
       }

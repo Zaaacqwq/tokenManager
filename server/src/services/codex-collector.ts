@@ -50,6 +50,11 @@ function resolveHome(filepath: string): string {
     : filepath;
 }
 
+/**
+ * Sync from Codex rollout JSONL files in ~/.codex/sessions/.
+ * Dedup is exact on session id + event timestamp, so files are re-scanned in
+ * full each run and a machine syncing for the first time backfills its history.
+ */
 export function syncCodex(): { synced: number; errors: number } {
   const sessionsDir = resolveHome(
     process.env.CODEX_SESSIONS_PATH || '~/.codex/sessions'
@@ -60,13 +65,6 @@ export function syncCodex(): { synced: number; errors: number } {
   }
 
   const db = getDb();
-
-  // Get sync state
-  const syncState = db.prepare(
-    'SELECT last_timestamp FROM sync_state WHERE source = ?'
-  ).get('codex') as { last_timestamp: string } | undefined;
-
-  const lastTimestamp = syncState?.last_timestamp || '1970-01-01T00:00:00.000Z';
 
   // Find or create OpenAI provider
   let provider = db.prepare(
@@ -89,13 +87,12 @@ export function syncCodex(): { synced: number; errors: number } {
     'INSERT INTO models (provider_id, name, input_price_per_m, output_price_per_m, cache_input_price_per_m, cache_output_price_per_m) VALUES (?, ?, ?, ?, ?, ?)'
   );
   const insertRecord = db.prepare(`
-    INSERT INTO usage_records (provider_id, model_id, source, session_id, input_tokens, output_tokens, cache_input_tokens, cache_output_tokens, cost_usd, recorded_at, raw_data)
-    VALUES (?, ?, 'codex', ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR IGNORE INTO usage_records (provider_id, model_id, source, session_id, external_id, input_tokens, output_tokens, cache_input_tokens, cache_output_tokens, cost_usd, recorded_at, raw_data)
+    VALUES (?, ?, 'codex', ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   let synced = 0;
   let errors = 0;
-  let latestTs = lastTimestamp;
 
   db.transaction(() => {
     for (const file of jsonlFiles) {
@@ -127,7 +124,10 @@ export function syncCodex(): { synced: number; errors: number } {
             if (payload.type !== 'token_count' || !payload.info?.last_token_usage) continue;
 
             const ts = event.timestamp || '';
-            if (ts <= lastTimestamp) continue;
+            // token_count events carry no id of their own; session + timestamp
+            // is the stable key, and without it the row would re-insert forever
+            if (!ts) continue;
+            const externalId = `${sessionId}:${ts}`;
 
             const usage = payload.info.last_token_usage;
             const inputTokens = usage.input_tokens || 0;
@@ -152,10 +152,11 @@ export function syncCodex(): { synced: number; errors: number } {
               modelName, inputTokens, outputTokens, cachedInput, 0
             );
 
-            insertRecord.run(
+            const result = insertRecord.run(
               provider!.id,
               model.id,
               sessionId,
+              externalId,
               inputTokens,
               outputTokens,
               cachedInput,
@@ -164,9 +165,7 @@ export function syncCodex(): { synced: number; errors: number } {
               ts,
               line
             );
-            synced++;
-
-            if (ts > latestTs) latestTs = ts;
+            synced += result.changes;
           } catch {
             errors++;
           }
@@ -174,16 +173,6 @@ export function syncCodex(): { synced: number; errors: number } {
       } catch {
         errors++;
       }
-    }
-
-    if (latestTs > lastTimestamp) {
-      db.prepare(`
-        INSERT INTO sync_state (source, last_timestamp, updated_at)
-        VALUES ('codex', ?, datetime('now'))
-        ON CONFLICT(source) DO UPDATE SET
-          last_timestamp = excluded.last_timestamp,
-          updated_at = datetime('now')
-      `).run(latestTs);
     }
   })();
 

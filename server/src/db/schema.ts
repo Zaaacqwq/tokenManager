@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { backfillExternalIds } from './migrate.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = path.join(__dirname, '../../data/token_manager.db');
@@ -13,6 +14,7 @@ export function getDb(): Database.Database {
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
     initSchema(db);
+    backfillExternalIds(db, DB_PATH);
   }
   return db;
 }
